@@ -27,6 +27,7 @@ using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
 using Robust.Shared.Utility;
 using Timer = Robust.Shared.Timing.Timer;
+using Robust.Shared.Timing;
 
 namespace Content.Server.Singularity.EntitySystems
 {
@@ -40,6 +41,7 @@ namespace Content.Server.Singularity.EntitySystems
         [Dependency] private GunSystem _gun = default!;
         [Dependency] private RadioSystem _radio = default!;
         [Dependency] private NavMapSystem _navMap = default!;
+        [Dependency] private IGameTiming _gameTiming = default!;
 
         public override void Initialize()
         {
@@ -327,6 +329,26 @@ namespace Content.Server.Singularity.EntitySystems
                 return;
 
             AlertRadio(ent, ent.Comp.LocUnlocked);
+        }
+
+        public override void Update(float frameTime)
+        {
+            base.Update(frameTime);
+            var query = EntityQueryEnumerator<EmitterComponent>();
+            while (query.MoveNext(out var uid, out var emitter))
+            {
+                if (emitter.AlertData == null)
+                    continue;
+
+                if(_gameTiming.CurTime < emitter.AlertData.message) continue;
+
+                AlertRadio(emitter.AlertData.Entity, emitter.AlertData.Message);
+            }
+        }
+
+        private void ScheduleAlert(Entity<EmitterComponent> ent, string type)
+        {
+            ent.Comp.AlertData = new AlertData(_gameTiming.CurTime + ent.Comp.AlertUpdateInterval, type);
         }
     }
 }
