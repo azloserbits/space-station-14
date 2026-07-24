@@ -11,7 +11,6 @@ using Content.Shared.Construction;
 using Content.Shared.Database;
 using Content.Shared.Destructible;
 using Content.Shared.DeviceLinking.Events;
-using Content.Shared.Emag.Systems;
 using Content.Shared.Interaction;
 using Content.Shared.Lock;
 using Content.Shared.Popups;
@@ -23,7 +22,6 @@ using Content.Shared.Weapons.Ranged.Components;
 using Robust.Shared.Map;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
-using Robust.Shared.Prototypes;
 using Robust.Shared.Random;
 using Robust.Shared.Utility;
 using Timer = Robust.Shared.Timing.Timer;
@@ -57,16 +55,17 @@ namespace Content.Server.Singularity.EntitySystems
             SubscribeLocalEvent<EmitterComponent, LockToggledEvent>(OnLockToggled);
         }
 
-        private void OnAnchorStateChanged(EntityUid uid, EmitterComponent component, ref AnchorStateChangedEvent args)
+        private void OnAnchorStateChanged(Entity<EmitterComponent> ent, ref AnchorStateChangedEvent args)
         {
             if (args.Anchored)
                 return;
 
-            SwitchOff(uid, component);
+            SwitchOff(ent);
         }
 
-        private void OnActivate(EntityUid uid, EmitterComponent component, ActivateInWorldEvent args)
+        private void OnActivate(Entity<EmitterComponent> ent, ActivateInWorldEvent args)
         {
+            var (uid, comp) = ent;
             if (args.Handled || !args.Complex)
                 return;
 
@@ -79,185 +78,191 @@ namespace Content.Server.Singularity.EntitySystems
 
             if (TryComp(uid, out PhysicsComponent? phys) && phys.BodyType == BodyType.Static)
             {
-                if (!component.IsOn)
+                if (!comp.IsOn)
                 {
-                    SwitchOn(uid, component);
+                    SwitchOn(ent);
                     _popup.PopupEntity(Loc.GetString("comp-emitter-turned-on",
                         ("target", uid)), uid, args.User);
                 }
                 else
                 {
-                    SwitchOff(uid, component);
+                    SwitchOff(ent);
                     _popup.PopupEntity(Loc.GetString("comp-emitter-turned-off",
                         ("target", uid)), uid, args.User);
                 }
 
-                var stateText = component.IsOn ? "on" : "off";
+                var stateText = comp.IsOn ? "on" : "off";
                 _adminLogger.Add(LogType.FieldGeneration,
-                    component.IsOn ? LogImpact.Medium : LogImpact.High,
+                    comp.IsOn ? LogImpact.Medium : LogImpact.High,
                     $"{ToPrettyString(args.User):player} toggled {ToPrettyString(uid):emitter} to {stateText}");
                 args.Handled = true;
             }
             else
             {
                 _popup.PopupEntity(Loc.GetString("comp-emitter-not-anchored",
-                    ("target", uid)), uid, args.User);
+                    ("target", uid)), uid,args.User);
             }
         }
 
         private void ReceivedChanged(
-            EntityUid uid,
-            EmitterComponent component,
+            Entity<EmitterComponent> ent,
             ref PowerConsumerReceivedChanged args)
         {
-            if (!component.IsOn)
+            var comp = ent.Comp;
+            if (!comp.IsOn)
             {
                 return;
             }
 
             if (args.ReceivedPower < args.DrawRate)
             {
-                PowerOff(uid, component);
+                PowerOff(ent);
             }
             else
             {
-                PowerOn(uid, component);
+                PowerOn(ent);
             }
         }
 
-        private void OnApcChanged(EntityUid uid, EmitterComponent component, ref PowerChangedEvent args)
+        private void OnApcChanged(Entity<EmitterComponent> ent, ref PowerChangedEvent args)
         {
-            if (!component.IsOn)
+            var comp = ent.Comp;
+            if (!comp.IsOn)
             {
                 return;
             }
 
             if (!args.Powered)
             {
-                PowerOff(uid, component);
+                PowerOff(ent);
             }
             else
             {
-                PowerOn(uid, component);
+                PowerOn(ent);
             }
         }
 
-        public void SwitchOff(EntityUid uid, EmitterComponent component)
+        public void SwitchOff(Entity<EmitterComponent> ent)
         {
-            component.IsOn = false;
+            var (uid, comp) = ent;
+            comp.IsOn = false;
             if (TryComp<PowerConsumerComponent>(uid, out var powerConsumer))
                 powerConsumer.DrawRate = 1; // this needs to be not 0 so that the visuals still work.
             if (TryComp<ApcPowerReceiverComponent>(uid, out var apcReceiver))
                 apcReceiver.Load = 1;
-            PowerOff(uid, component);
-            UpdateAppearance(uid, component);
+            PowerOff(ent);
+            UpdateAppearance(ent);
         }
 
-        public void SwitchOn(EntityUid uid, EmitterComponent component)
+        public void SwitchOn(Entity<EmitterComponent> ent)
         {
-            component.IsOn = true;
+            var (uid, comp) = ent;
+            comp.IsOn = true;
             if (TryComp<PowerConsumerComponent>(uid, out var powerConsumer))
-                powerConsumer.DrawRate = component.PowerUseActive;
+                powerConsumer.DrawRate = comp.PowerUseActive;
             if (TryComp<ApcPowerReceiverComponent>(uid, out var apcReceiver))
             {
-                apcReceiver.Load = component.PowerUseActive;
+                apcReceiver.Load = comp.PowerUseActive;
                 if (apcReceiver.Powered)
-                    PowerOn(uid, component);
+                    PowerOn(ent);
             }
             // Do not directly PowerOn().
             // OnReceivedPowerChanged will get fired due to DrawRate change which will turn it on.
-            UpdateAppearance(uid, component);
+            UpdateAppearance(ent);
         }
 
-        public void PowerOff(EntityUid uid, EmitterComponent component)
+        public void PowerOff(Entity<EmitterComponent> ent)
         {
-            if (!component.IsPowered)
+            var comp = ent.Comp;
+            if (!comp.IsPowered)
             {
                 return;
             }
 
-            AlertRadio((uid, component), component.LocUnpowered);
-
-            component.IsPowered = false;
-
-            // Must be set while emitter powered.
-            DebugTools.AssertNotNull(component.TimerCancel);
-            component.TimerCancel?.Cancel();
-
-            UpdateAppearance(uid, component);
+            ScheduleAlert((ent), comp.LocUnpowered);
+            comp.IsPowered = false;
+            UpdateAppearance(ent);
         }
 
-        public void PowerOn(EntityUid uid, EmitterComponent component)
+        public void PowerOn(Entity<EmitterComponent> ent)
         {
-            if (component.IsPowered)
+            var comp = ent.Comp;
+            if (comp.IsPowered)
             {
                 return;
             }
 
-            component.IsPowered = true;
+            comp.IsPowered = true;
 
-            component.FireShotCounter = 0;
-            component.TimerCancel = new CancellationTokenSource();
+            comp.FireShotCounter = 0;
+            comp.TimerCancel = new CancellationTokenSource();
 
-            Timer.Spawn(component.FireBurstDelayMax, () => ShotTimerCallback(uid, component), component.TimerCancel.Token);
+            //Timer.Spawn(component.FireBurstDelayMax, () => ShotTimerCallback(ent), component.TimerCancel.Token);
 
-            UpdateAppearance(uid, component);
+            UpdateAppearance(ent);
         }
 
-        private void ShotTimerCallback(EntityUid uid, EmitterComponent component)
+        private void ShotTimerCallback(Entity<EmitterComponent> ent)
         {
-            if (component.Deleted)
+            var (uid, comp) = ent;
+
+            if (comp.Deleted)
                 return;
 
             // Any power-off condition should result in the timer for this method being cancelled
             // and thus not firing
-            DebugTools.Assert(component.IsPowered);
-            DebugTools.Assert(component.IsOn);
+            DebugTools.Assert(comp.IsPowered);
+            DebugTools.Assert(comp.IsOn);
 
-            Fire(uid, component);
+            Fire(ent);
 
             TimeSpan delay;
-            if (component.FireShotCounter < component.FireBurstSize)
+            if (comp.FireShotCounter < comp.FireBurstSize)
             {
-                component.FireShotCounter += 1;
-                delay = component.FireInterval;
+                comp.FireShotCounter += 1;
+                delay = comp.FireInterval;
             }
             else
             {
-                component.FireShotCounter = 0;
-                var diff = component.FireBurstDelayMax - component.FireBurstDelayMin;
+                comp.FireShotCounter = 0;
+                var diff = comp.FireBurstDelayMax - comp.FireBurstDelayMin;
                 // TIL you can do TimeSpan * double.
-                delay = component.FireBurstDelayMin + _random.NextFloat() * diff;
+                delay = comp.FireBurstDelayMin + _random.NextFloat() * diff;
             }
 
             // Must be set while emitter powered.
-            DebugTools.AssertNotNull(component.TimerCancel);
-            Timer.Spawn(delay, () => ShotTimerCallback(uid, component), component.TimerCancel!.Token);
+            DebugTools.AssertNotNull(comp.TimerCancel);
+            Timer.Spawn(delay, () => ShotTimerCallback(ent), comp.TimerCancel!.Token);
         }
 
-        private void Fire(EntityUid uid, EmitterComponent component)
+        private void Fire(Entity<EmitterComponent> ent)
         {
+            var (uid, comp) = ent;
+
             if (!TryComp<GunComponent>(uid, out var gunComponent))
                 return;
 
             var xform = Transform(uid);
-            var ent = Spawn(component.BoltType, xform.Coordinates);
-            var proj = EnsureComp<ProjectileComponent>(ent);
-            _projectile.SetShooter(ent, proj, uid);
+            //shooteruid is the temporary variable name because idk what to name it
+            var Shooteruid = Spawn(comp.BoltType, xform.Coordinates);
+            var proj = EnsureComp<ProjectileComponent>(Shooteruid);
+            _projectile.SetShooter(uid, proj, Shooteruid);
 
             var targetPos = new EntityCoordinates(uid, new Vector2(0, -1));
 
             _gun.Shoot((uid, gunComponent), ent, xform.Coordinates, targetPos, out _);
         }
 
-        private void UpdateAppearance(EntityUid uid, EmitterComponent component)
+        private void UpdateAppearance(Entity<EmitterComponent> ent)
         {
+            var (uid, comp) = ent;
+
             EmitterVisualState state;
-            if (component.IsPowered)
+            if (comp.IsPowered)
             {
                 state = EmitterVisualState.On;
             }
-            else if (component.IsOn)
+            else if (comp.IsOn)
             {
                 state = EmitterVisualState.Underpowered;
             }
@@ -268,34 +273,35 @@ namespace Content.Server.Singularity.EntitySystems
             _appearance.SetData(uid, EmitterVisuals.VisualState, state);
         }
 
-        private void OnSignalReceived(EntityUid uid, EmitterComponent component, ref SignalReceivedEvent args)
+        private void OnSignalReceived(Entity<EmitterComponent> ent, ref SignalReceivedEvent args)
         {
+            var (uid, comp) = ent;
             // must anchor the emitter for signals to work
             if (TryComp<PhysicsComponent>(uid, out var phys) && phys.BodyType != BodyType.Static)
                 return;
 
-            if (args.Port == component.OffPort)
+            if (args.Port == comp.OffPort)
             {
-                SwitchOff(uid, component);
+                SwitchOff(ent);
             }
-            else if (args.Port == component.OnPort)
+            else if (args.Port == comp.OnPort)
             {
-                SwitchOn(uid, component);
+                SwitchOn(ent);
             }
-            else if (args.Port == component.TogglePort)
+            else if (args.Port == comp.TogglePort)
             {
-                if (component.IsOn)
+                if (comp.IsOn)
                 {
-                    SwitchOff(uid, component);
+                    SwitchOff(ent);
                 }
                 else
                 {
-                    SwitchOn(uid, component);
+                    SwitchOn(ent);
                 }
             }
-            else if (component.SetTypePorts.TryGetValue(args.Port, out var boltType))
+            else if (comp.SetTypePorts.TryGetValue(args.Port, out var boltType))
             {
-                component.BoltType = boltType;
+                comp.BoltType = boltType;
             }
         }
 
@@ -308,7 +314,7 @@ namespace Content.Server.Singularity.EntitySystems
         private void OnDeconstructed(Entity<EmitterComponent> ent, ref MachineDeconstructedEvent args)
         {
             // right now you don't even need to unlock the emitter to deconstruct it. that's almost certainly a bug but even without it it probably still needs an alert
-            AlertRadio(ent, ent.Comp.LocDeconstructed);
+            ScheduleAlert(ent, ent.Comp.LocDeconstructed);
         }
 
         private void AlertRadio(Entity<EmitterComponent> ent, string locString)
@@ -323,12 +329,23 @@ namespace Content.Server.Singularity.EntitySystems
             _radio.SendRadioMessage(ent.Owner, message, ent.Comp.RadioChannel, ent.Owner);
         }
 
+        private void ScheduleAlert(Entity<EmitterComponent> ent, string type)
+        {
+            ent.Comp.AlertData = new AlertData(_gameTiming.CurTime + ent.Comp.AlertUpdateInterval, type, false); //note false is not thingy rn
+        }
+        private void ClearAlert(Entity<EmitterComponent> ent, string type)
+        {
+            if (ent.Comp.AlertData?.Message != type)
+                return;
+            ent.Comp.AlertData = null;
+        }
+
         private void OnLockToggled(Entity<EmitterComponent> ent, ref LockToggledEvent args)
         {
             if (args.Locked)
                 return;
 
-            AlertRadio(ent, ent.Comp.LocUnlocked);
+            ScheduleAlert(ent, ent.Comp.LocUnlocked);
         }
 
         public override void Update(float frameTime)
@@ -337,18 +354,21 @@ namespace Content.Server.Singularity.EntitySystems
             var query = EntityQueryEnumerator<EmitterComponent>();
             while (query.MoveNext(out var uid, out var emitter))
             {
+                if (emitter.IsOn)
+                {
+                    var ent = (uid, emitter);
+                    ShotTimerCallback(ent);
+                    //TODO: add a check for if the delay between bursts happened
+                    continue;
+                }
+
                 if (emitter.AlertData == null)
                     continue;
+                if(_gameTiming.CurTime < emitter.AlertData.AlertTime) continue;
 
-                if(_gameTiming.CurTime < emitter.AlertData.message) continue;
-
-                AlertRadio(emitter.AlertData.Entity, emitter.AlertData.Message);
+                AlertRadio((uid, emitter), emitter.AlertData.Message);
+                emitter.AlertData = null;
             }
-        }
-
-        private void ScheduleAlert(Entity<EmitterComponent> ent, string type)
-        {
-            ent.Comp.AlertData = new AlertData(_gameTiming.CurTime + ent.Comp.AlertUpdateInterval, type);
         }
     }
 }

@@ -7,10 +7,11 @@ using Robust.Shared.Serialization;
 
 namespace Content.Shared.Singularity.Components;
 
-public sealed record AlertData(TimeSpan? AlertTime, string Message);
+public sealed record AlertData(TimeSpan? AlertTime, string Message, bool Override);
 
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState]
-public sealed partial class EmitterComponent : Component
+public sealed partial class
+EmitterComponent : Component
 {
     [DataField]
     public CancellationTokenSource? TimerCancel;
@@ -19,10 +20,13 @@ public sealed partial class EmitterComponent : Component
     public AlertData? AlertData;
 
     [DataField]
-    public TimeSpan UpdateInterval = TimeSpan.FromSeconds(3);
+    public TimeSpan UpdateInterval = TimeSpan.FromSeconds(2);
 
     [DataField]
     public float AlertUpdateIntervalMultiplier = 0.5f;
+
+    [ViewVariables]
+    public TimeSpan AlertUpdateInterval => UpdateInterval * AlertUpdateIntervalMultiplier;
 
     // whether the power switch is in "on"
     [ViewVariables] public bool IsOn;
