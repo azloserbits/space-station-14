@@ -63,7 +63,7 @@ namespace Content.Server.Singularity.EntitySystems
             SwitchOff(ent);
         }
 
-        private void OnActivate(Entity<EmitterComponent> ent, ActivateInWorldEvent args)
+        private void OnActivate(Entity<EmitterComponent> ent, ref ActivateInWorldEvent args)
         {
             var (uid, comp) = ent;
             if (args.Handled || !args.Complex)
@@ -191,13 +191,11 @@ namespace Content.Server.Singularity.EntitySystems
             {
                 return;
             }
-
+            ClearAlert((uid, component), component.LocUnpowered);
             comp.IsPowered = true;
 
             comp.FireShotCounter = 0;
-            comp.TimerCancel = new CancellationTokenSource();
-
-            //Timer.Spawn(component.FireBurstDelayMax, () => ShotTimerCallback(ent), component.TimerCancel.Token);
+            component.FireTime = _gameTiming.CurTime + component.FireBurstDelayMax;
 
             UpdateAppearance(ent);
         }
@@ -354,20 +352,34 @@ namespace Content.Server.Singularity.EntitySystems
             var query = EntityQueryEnumerator<EmitterComponent>();
             while (query.MoveNext(out var uid, out var emitter))
             {
-                if (emitter.IsOn)
+                if(emitter.Deleted) continue;
+                if(emitter.FireTime == null) continue;
+                if(_gameTiming.CurTime < emitter.FireTime) continue;
+
+                if (emitter.IsOn && emitter.IsPowered)
                 {
                     var ent = (uid, emitter);
-                    ShotTimerCallback(ent);
+                    Fire(ent); //TODO: Decide if you use Fire() or ShotTimerCallBack()
                     //TODO: add a check for if the delay between bursts happened
                     continue;
                 }
-
-                if (emitter.AlertData == null)
-                    continue;
+                if (emitter.AlertData == null) continue;
                 if(_gameTiming.CurTime < emitter.AlertData.AlertTime) continue;
 
-                AlertRadio((uid, emitter), emitter.AlertData.Message);
-                emitter.AlertData = null;
+                emitter.FireTime = _gameTiming + delay;
+
+                var toRemove = new List<string>;
+                foreach (var message in emitter.Alerts)
+                {
+                    AlertRadio((uid, emitter), emitter.AlertData.Message);
+                    emitter.AlertData = null;
+                    toRemove.Add(message)
+                }
+                foreach (var key in toRemove)
+                {
+                    emitter.Alerts.Remove(key);
+                }
+
             }
         }
     }

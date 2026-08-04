@@ -34,7 +34,7 @@ namespace Content.Server.Singularity
             while (emitterQuery.MoveNext(out var uid, out var emitterComponent))
             {
                 //FIXME: This turns on ALL emitters, including APEs. It should only turn on the containment field emitters.
-                _emitterSystem.SwitchOn(uid, emitterComponent);
+                //_emitterSystem.SwitchOn(uid, emitterComponent);
             }
 
             // Turn on radiation collectors
